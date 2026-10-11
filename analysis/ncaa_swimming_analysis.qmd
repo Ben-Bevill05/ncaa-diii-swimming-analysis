@@ -1,0 +1,585 @@
+---
+title: "NCAA Division III Swimming Championship Performance Analysis"
+author: "Ben Bevill"
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-tools: true
+execute:
+  warning: false
+  message: false
+---
+
+## Introduction
+
+Seed times and seed rankings are used to project how swimmers may perform entering the NCAA Division III Swimming and Diving Championships. However, championship meets create opportunities for swimmers to outperform expectations while others may fall below their projected positions.
+
+This project analyzes the 2025 NCAA Division III Men's Swimming Championships to examine how well pre-meet seed position predicts actual championship performance.
+
+The analysis focuses on three main questions:
+
+1.  How strongly does seed rank predict championship finish?
+2.  How does performance relative to seed vary across events?
+3.  How accurately can seed rank predict whether a swimmer will score at the NCAA Championships?
+
+## Data
+
+The dataset contains 467 swimmer-event observations across all 13 individual men's swimming events at the 2025 NCAA Division III Championships.
+
+Each observation includes the swimmer's event, school, class year, seed rank, seed time, preliminary performance, and finals performance when applicable.
+
+```{r}
+#| label: setup
+
+library(tidyverse)
+library(pROC)
+
+mens_2025 <- read_csv(here::here("data", "2025_mens_all_events.csv"))
+```
+
+### Data Preparation
+
+Because the 1650 freestyle is contested as a timed final rather than using the same preliminary and finals format as the other individual events, a standardized championship performance variable was created.
+
+```{r}
+#| label: data-preparation
+
+mens_2025 <- mens_2025 %>%
+  mutate(
+    performance_time = if_else(
+      event == "1650 Free",
+      final_time,
+      prelim_time
+    ),
+
+    performance_rank = if_else(
+      event == "1650 Free",
+      final_rank,
+      prelim_rank
+    ),
+
+    time_change = performance_time - seed_time,
+
+    percent_time_change =
+      ((performance_time - seed_time) / seed_time) * 100,
+
+    rank_change = seed_rank - performance_rank,
+
+    seeded_top_16 = seed_rank <= 16,
+
+    finished_top_16 = performance_rank <= 16,
+
+    outperformed_seed = performance_rank < seed_rank
+  )
+
+rank_data <- mens_2025 %>%
+  filter(!is.na(performance_rank))
+```
+
+## Championship Time Performance
+
+The first analysis examined whether swimmers generally became faster or slower compared with their seed times.
+
+```{r}
+#| label: overall-time-performance
+
+overall_performance <- mens_2025 %>%
+  summarise(
+    observations = n(),
+    avg_time_change = mean(time_change, na.rm = TRUE),
+    median_time_change = median(time_change, na.rm = TRUE),
+    avg_percent_change = mean(percent_time_change, na.rm = TRUE),
+    percent_outperformed_seed =
+      mean(outperformed_seed, na.rm = TRUE) * 100
+  )
+
+overall_performance
+```
+
+Across the 467 swimmer-event observations, swimmers were approximately **0.326% slower than their seed times on average**. About **47.5% of swimmers outperformed their seed rank**.
+
+### Performance by Event
+
+```{r}
+#| label: event-performance
+
+event_performance <- mens_2025 %>%
+  group_by(event) %>%
+  summarise(
+    swimmers = n(),
+    avg_percent_change =
+      mean(percent_time_change, na.rm = TRUE),
+
+    median_percent_change =
+      median(percent_time_change, na.rm = TRUE),
+
+    percent_outperformed_seed =
+      mean(outperformed_seed, na.rm = TRUE) * 100
+  ) %>%
+  arrange(avg_percent_change)
+
+event_performance
+```
+
+The 50 Freestyle was the only event in which swimmers were faster than their seed times on average, improving by approximately **0.124%**. The 1650 Freestyle had the largest average increase in time at approximately **0.847%**, followed by the 500 Freestyle at approximately **0.666%**.
+
+## Seed Rank and Championship Performance
+
+A Spearman rank correlation was used to measure the relationship between pre-meet seed rank and championship performance rank.
+
+Spearman correlation was selected because both variables represent rankings rather than continuous measurements.
+
+```{r}
+#| label: seed-correlation
+
+seed_correlation <- cor.test(
+  rank_data$seed_rank,
+  rank_data$performance_rank,
+  method = "spearman",
+  exact = FALSE
+)
+
+seed_correlation
+```
+
+Seed rank and championship performance had a **strong positive relationship (rho = 0.797, p \< 0.001)**. This indicates that higher-seeded swimmers generally finished higher at the NCAA Championships, although considerable movement still occurred.
+
+```{r}
+#| label: seed-finish-plot
+
+ggplot(
+  rank_data,
+  aes(x = seed_rank, y = performance_rank)
+) +
+  geom_point(alpha = 0.5) +
+  geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = "dashed"
+  ) +
+  labs(
+    title = "Seed Rank vs. Championship Performance",
+    subtitle = "2025 NCAA Division III Men's Swimming",
+    x = "Seed Rank",
+    y = "Championship Performance Rank",
+    caption = "Dashed line represents finishing exactly at seed"
+  ) +
+  theme_minimal()
+```
+
+Swimmers below the dashed line outperformed their seed position, while swimmers above the line finished below their projected position.
+
+### Accuracy of Seed Rankings
+
+```{r}
+#| label: rank-accuracy
+
+rank_accuracy <- rank_data %>%
+  summarise(
+    avg_rank_difference =
+      mean(abs(performance_rank - seed_rank)),
+
+    median_rank_difference =
+      median(abs(performance_rank - seed_rank)),
+
+    within_3_places =
+      mean(abs(performance_rank - seed_rank) <= 3) * 100,
+
+    within_5_places =
+      mean(abs(performance_rank - seed_rank) <= 5) * 100,
+
+    within_10_places =
+      mean(abs(performance_rank - seed_rank) <= 10) * 100
+  )
+
+rank_accuracy
+```
+
+The average swimmer finished **5.51 places away from their seed**, while the median difference was four places. Approximately **64.1% finished within five places of their seed** and **86.5% finished within ten places**.
+
+## Event Predictability
+
+```{r}
+#| label: event-predictability
+
+event_predictability <- rank_data %>%
+  group_by(event) %>%
+  summarise(
+    swimmers = n(),
+
+    seed_finish_correlation =
+      cor(
+        seed_rank,
+        performance_rank,
+        method = "spearman"
+      ),
+
+    avg_rank_error =
+      mean(abs(performance_rank - seed_rank)),
+
+    within_5_places =
+      mean(abs(performance_rank - seed_rank) <= 5) * 100
+  ) %>%
+  arrange(desc(seed_finish_correlation))
+
+event_predictability
+```
+
+The 100 Butterfly had the strongest relationship between seed and championship finish with a correlation of approximately **0.881**. The 500 Freestyle had the weakest relationship at approximately **0.673**.
+
+Correlation and average rank error should be interpreted together because events have different field sizes.
+
+## NCAA Scoring
+
+NCAA individual swimming events score through 16th place. The next analysis examined how often swimmers seeded in scoring position actually scored.
+
+```{r}
+#| label: scoring-variables
+
+mens_2025 <- mens_2025 %>%
+  mutate(
+    seeded_to_score = seed_rank <= 16,
+
+    scored = case_when(
+      event == "1650 Free" & final_rank <= 16 ~ TRUE,
+      event == "1650 Free" ~ FALSE,
+      !is.na(final_rank) & final_rank <= 16 ~ TRUE,
+      TRUE ~ FALSE
+    )
+  )
+```
+
+```{r}
+#| label: scoring-summary
+
+scoring_summary <- mens_2025 %>%
+  summarise(
+    top16_seeds = sum(seeded_to_score),
+
+    top16_seeds_who_scored =
+      sum(seeded_to_score & scored),
+
+    percent_top16_who_scored =
+      mean(scored[seeded_to_score]) * 100,
+
+    outside_top16_who_scored =
+      sum(!seeded_to_score & scored),
+
+    percent_scorers_from_outside_top16 =
+      mean(!seeded_to_score[scored]) * 100
+  )
+
+scoring_summary
+```
+
+Of the **208 swimmers seeded in the top 16**, 158 actually scored, giving top-16 seeds a **76.0% scoring rate**.
+
+At the same time, **50 of the 208 scoring positions, or 24.0%, were earned by swimmers seeded outside the top 16**.
+
+This demonstrates that the psych sheet provides useful information about likely scorers, but substantial movement occurs around the scoring cutoff.
+
+## Scoring Probability by Seed Range
+
+```{r}
+#| label: seed-groups
+
+mens_2025 <- mens_2025 %>%
+  mutate(
+    seed_group = case_when(
+      seed_rank <= 4 ~ "1-4",
+      seed_rank <= 8 ~ "5-8",
+      seed_rank <= 12 ~ "9-12",
+      seed_rank <= 16 ~ "13-16",
+      seed_rank <= 20 ~ "17-20",
+      seed_rank <= 24 ~ "21-24",
+      seed_rank <= 32 ~ "25-32",
+      TRUE ~ "33+"
+    ),
+
+    seed_group = factor(
+      seed_group,
+      levels = c(
+        "1-4", "5-8", "9-12", "13-16",
+        "17-20", "21-24", "25-32", "33+"
+      )
+    )
+  )
+
+scoring_by_seed <- mens_2025 %>%
+  group_by(seed_group) %>%
+  summarise(
+    swimmers = n(),
+    scorers = sum(scored),
+    scoring_probability = mean(scored) * 100
+  )
+
+scoring_by_seed
+```
+
+Scoring probability declined substantially as seed rank became lower. Seeds 1-4 scored **98.1%** of the time, while seeds 5-8 scored **92.3%** of the time.
+
+One of the most interesting findings was that seeds **13-16 and 17-20 both had a 40.4% scoring rate**.
+
+```{r}
+#| label: scoring-probability-bars
+
+ggplot(
+  scoring_by_seed,
+  aes(x = seed_group, y = scoring_probability)
+) +
+  geom_col() +
+  geom_text(
+    aes(label = paste0(round(scoring_probability, 1), "%")),
+    vjust = -0.4
+  ) +
+  scale_y_continuous(
+    limits = c(0, 105),
+    breaks = seq(0, 100, 20)
+  ) +
+  labs(
+    title = "Probability of Scoring by NCAA Seed Range",
+    subtitle = "2025 NCAA Division III Men's Swimming",
+    x = "Seed entering NCAA Championships",
+    y = "Percentage Who Scored"
+  ) +
+  theme_minimal()
+```
+
+## Predicting NCAA Scoring
+
+A logistic regression model was created to estimate the probability that a swimmer would score based on their seed rank.
+
+```{r}
+#| label: logistic-model
+
+scoring_model <- glm(
+  scored ~ seed_rank,
+  data = mens_2025,
+  family = binomial
+)
+
+summary(scoring_model)
+```
+
+Seed rank was a statistically significant predictor of scoring (**p \< 0.001**).
+
+The estimated coefficient for seed rank was approximately **-0.178**. Converting this coefficient to an odds ratio:
+
+```{r}
+#| label: odds-ratio
+
+exp(coef(scoring_model))
+```
+
+Each one-position decrease in seed ranking was associated with approximately a **16.3% decrease in the odds of scoring**.
+
+### Predicted Scoring Probability
+
+```{r}
+#| label: scoring-predictions
+
+seed_predictions <- tibble(
+  seed_rank = 1:40
+)
+
+seed_predictions$predicted_probability <- predict(
+  scoring_model,
+  newdata = seed_predictions,
+  type = "response"
+)
+```
+
+```{r}
+#| label: logistic-curve
+
+ggplot(
+  seed_predictions,
+  aes(
+    x = seed_rank,
+    y = predicted_probability * 100
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_hline(
+    yintercept = 50,
+    linetype = "dashed"
+  ) +
+  labs(
+    title = "Predicted Probability of Scoring by Seed Rank",
+    subtitle = "2025 NCAA Division III Men's Swimming",
+    x = "Seed Rank",
+    y = "Predicted Probability of Scoring (%)",
+    caption = "Dashed line represents a 50% predicted probability"
+  ) +
+  theme_minimal()
+```
+
+The model's estimated 50% scoring probability occurs around **seed 16-17**, almost exactly at the NCAA's 16-place scoring cutoff.
+
+## Classification Performance
+
+A 50% probability threshold was initially used to classify swimmers as predicted scorers or non-scorers.
+
+```{r}
+#| label: classifications
+
+mens_2025 <- mens_2025 %>%
+  mutate(
+    predicted_prob = predict(
+      scoring_model,
+      newdata = mens_2025,
+      type = "response"
+    ),
+
+    predicted_scored =
+      predicted_prob >= 0.50
+  )
+
+confusion_matrix <- table(
+  Predicted = mens_2025$predicted_scored,
+  Actual = mens_2025$scored
+)
+
+confusion_matrix
+```
+
+The model produced:
+
+- 158 true positives
+- 209 true negatives
+- 50 false positives
+- 50 false negatives
+
+```{r}
+#| label: classification-metrics
+
+TP <- confusion_matrix["TRUE", "TRUE"]
+TN <- confusion_matrix["FALSE", "FALSE"]
+FP <- confusion_matrix["TRUE", "FALSE"]
+FN <- confusion_matrix["FALSE", "TRUE"]
+
+classification_metrics <- tibble(
+  accuracy =
+    (TP + TN) / (TP + TN + FP + FN),
+
+  precision =
+    TP / (TP + FP),
+
+  recall =
+    TP / (TP + FN),
+
+  specificity =
+    TN / (TN + FP)
+)
+
+classification_metrics
+```
+
+At a 50% threshold, the model achieved approximately **78.6% accuracy**, **76.0% precision**, **76.0% recall**, and **80.7% specificity**.
+
+## Classification Thresholds
+
+Different probability thresholds change the balance between identifying actual scorers and avoiding false positive predictions.
+
+```{r}
+#| label: threshold-analysis
+
+threshold_results <- map_dfr(
+  seq(0.1, 0.9, by = 0.1),
+
+  function(threshold) {
+
+    predicted <-
+      mens_2025$predicted_prob >= threshold
+
+    TP <- sum(predicted & mens_2025$scored)
+    TN <- sum(!predicted & !mens_2025$scored)
+    FP <- sum(predicted & !mens_2025$scored)
+    FN <- sum(!predicted & mens_2025$scored)
+
+    tibble(
+      threshold = threshold,
+
+      accuracy =
+        (TP + TN) / nrow(mens_2025),
+
+      precision =
+        TP / (TP + FP),
+
+      recall =
+        TP / (TP + FN),
+
+      specificity =
+        TN / (TN + FP)
+    )
+  }
+)
+
+threshold_results
+```
+
+Lower thresholds increased recall because the model classified more swimmers as scorers. Higher thresholds increased precision and specificity but missed more swimmers who actually scored.
+
+Among the thresholds examined, **0.60 produced the highest classification accuracy at approximately 80.7%**.
+
+## ROC Curve and AUC
+
+The ROC curve evaluates model performance across all possible classification thresholds.
+
+```{r}
+#| label: roc-analysis
+
+roc_result <- roc(
+  mens_2025$scored,
+  mens_2025$predicted_prob
+)
+
+auc(roc_result)
+```
+
+```{r}
+#| label: roc-plot
+
+plot(
+  roc_result,
+  main = "ROC Curve: Predicting NCAA Scorers"
+)
+```
+
+The model produced an **AUC of 0.887**, indicating a strong ability to distinguish between swimmers who scored and swimmers who did not score.
+
+An AUC of 0.887 can also be interpreted as approximately an **88.7% chance that a randomly selected scorer will receive a higher predicted scoring probability than a randomly selected non-scorer**.
+
+However, because the model was trained and evaluated using the same 2025 championship data, this AUC represents performance on the observed dataset rather than performance on unseen future championship data.
+
+## Key Findings
+
+The analysis produced several major findings:
+
+1.  Seed rank was strongly associated with championship finish, with a Spearman correlation of approximately **0.797**.
+2.  The average swimmer finished **5.51 places away from their seed**, while 64.1% finished within five places.
+3.  Swimmers were approximately **0.326% slower than their seed times on average**.
+4.  Only **76.0% of swimmers seeded in the top 16 actually scored**.
+5.  **24.0% of scoring positions were earned by swimmers seeded outside the top 16**.
+6.  Seeds 1-4 scored 98.1% of the time, compared with only 40.4% for seeds 13-16.
+7.  Seeds 13-16 and 17-20 had the **same 40.4% scoring rate** in 2025.
+8.  Logistic regression showed a strong relationship between seed rank and scoring probability.
+9.  At a 50% classification threshold, the model achieved **78.6% accuracy**.
+10. The logistic regression model produced an **AUC of 0.887**, demonstrating strong separation between scorers and non-scorers within the 2025 championship data.
+
+## Limitations
+
+This analysis examines only the 2025 NCAA Division III Men's Swimming Championships. Patterns observed in a single championship may not represent NCAA Division III swimming across multiple seasons.
+
+The logistic regression model was also trained and evaluated using the same 2025 dataset. Therefore, its classification accuracy describes performance on the observed data and should not be interpreted as validated predictive accuracy on future NCAA Championships.
+
+Future analysis could incorporate multiple championship seasons and evaluate models on data that were not used during model training.
+
+## Conclusion
+
+Pre-meet seed rankings provide substantial information about expected NCAA championship performance, but they do not determine the final results.
+
+Seed rank had a strong relationship with championship finish and scoring probability. However, nearly one-quarter of scoring positions were earned by swimmers seeded outside the top 16, demonstrating considerable movement during the championship meet.
+
+The results suggest that NCAA psych sheets provide a useful baseline for predicting championship performance while still leaving meaningful opportunities for swimmers to outperform expectations.
