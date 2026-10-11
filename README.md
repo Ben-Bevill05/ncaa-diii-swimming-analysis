@@ -5,7 +5,7 @@ How well do pre-meet seed rankings predict what actually happens at a national c
 **Tools:** R · tidyverse · pROC · Quarto
 **Methods:** Spearman correlation · logistic regression · classification metrics · threshold analysis · ROC/AUC
 
-📊 **[Read the full write-up on my portfolio →](https://ben-bevill05.github.io/benbevill.github.io/swimming.html)**
+📊 **[Read the full write-up on my portfolio →](https://ben-bevill05.github.io/swimming.html)**
 
 ---
 
@@ -76,4 +76,4 @@ How well do pre-meet seed rankings predict what actually happens at a national c
 
 ---
 
-**Ben Bevill** · Data Analytics, Denison University · [Portfolio](https://ben-bevill05.github.io/benbevill.github.io/) · [LinkedIn](https://www.linkedin.com/in/ben-bevill-5a9190331/)
+**Ben Bevill** · Data Analytics, Denison University · [Portfolio](https://ben-bevill05.github.io/) · [LinkedIn](https://www.linkedin.com/in/ben-bevill-5a9190331/)
